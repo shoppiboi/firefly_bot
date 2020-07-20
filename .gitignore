@@ -1,2 +1,2 @@
 .env
-*.json
+client_secret.json
