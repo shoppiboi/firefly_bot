@@ -3,9 +3,10 @@
 import os
 import random
 import sys
-from datetime import datetime
+import datetime
 import time
 import asyncio
+import mysql.connector
 
 import discord
 from dotenv import load_dotenv
@@ -17,21 +18,34 @@ class Duel():
     def __init__(self, challenger_user, defender_user):
         global row_index
 
-        self.id = create_duel_id(int(challenger_user.id), int(defender_user.id))
         self.challenger = challenger_user
         self.defender = defender_user
-        self.time = self.get_time()
-        self.row = row_index
 
-        self.accepted = -1
-        self.acceptance_limit = self.acceptance_time_limit(self.time)
+        self.id = create_duel_id(int(self.challenger.id), int(self.defender.id))
 
-        self.duel_clock_index = create_duel_clock(self, 30) #   make this 15 minutes
+        self.add_duel()
+        
+        
+        # self.time = self.get_time()
+        # self.row = row_index
 
-        self.cancelled = False
+        # self.accepted = -1
+        # self.acceptance_limit = self.acceptance_time_limit(self.time)
 
-    def __del__(self):
-        print("Duel " + self.id + " has been deleted")
+        # self.duel_clock_index = create_duel_clock(self, 30) #   make this 15 minutes
+
+        # self.cancelled = False
+
+    def add_duel(self):
+        global mycursor
+        global mydb
+
+        sql = "INSERT INTO duel (duel_id, challenger_id, defender_id, created_at) VALUES ('%s', '%s', '%s', '%s')" % (self.id, self.challenger.id, self.defender.id, self.get_datetime())
+
+        mycursor.execute(sql)
+
+        mydb.commit()
+
 
     #   adds fifteen minutes to the creation-time and stores it
     #   Defender has to accept duel by this time or the duel is
@@ -39,8 +53,9 @@ class Duel():
     def acceptance_time_limit(self, time):
         return str(str(time)[:3] + str(int(str(time)[3:]) + 15))
 
-    def get_time(self):
-        return str(datetime.now().time())[:5]
+    def get_datetime(self):
+        now = datetime.datetime.now()
+        return now
 
     def store_channel(self, channel):
         self.channel_ = channel
@@ -130,6 +145,20 @@ DIRECTORY_ = os.getenv('DIRECTORY')
 
 client = discord.Client()
 
+DB_USERNAME = os.getenv('USERNAME')
+DB_PASSWORD = os.getenv('PASSWORD')
+DB_DATABASE = os.getenv('DATABASE')
+
+mydb = mysql.connector.connect(
+    host = 'localhost',
+    user = 'testuser',
+    password = DB_PASSWORD,
+    database= DB_DATABASE
+)
+
+mycursor = mydb.cursor()
+
+
 row_index = 2
 
 worksheet_names = { #  dictionary for index -> name
@@ -148,16 +177,13 @@ duel_list = {}  #   dictionary for duel_id -> Duel()
 # pending_duel_clocks = []
 duel_clocks_list = []
 
-channels_pending_deletion = []
-duels_pending_deletion = []
-
 @client.event
 async def on_ready():
     global worksheet_names
 
     worksheet_names = {0: 'Table'}
 
-    print(f'{client.user} has connected to Discord') 
+    print(f'{client.user} has connected to Discord')
 
 @client.event
 async def on_message(message):
@@ -173,13 +199,27 @@ async def on_message(message):
     elif '!duel' in message.content:
 
         challenger = message.author
+
+        if not check_signed_up(challenger.id):
+            add_user(challenger)
+            response = "No profile found in database. New profile has been made for {}."
+            response = resposne.format(challenger.mention)
+            await message.channel.send(resposne)
+
+        
         defender = message.mentions[0]
+
+        if not check_signed_up(defender.id):
+            add_user(defender)
+            response = "No profile found in database. New profile has been made for {}."
+            reponse = response.format(defender.mention)
+            await message.channel.send(response)
 
         new_duel = Duel(challenger, defender)
 
-        if create_duel(new_duel):
-            await create_duel_channel(message, new_duel)
-            initial_sheet_fill(new_duel)
+        # if create_duel(new_duel):
+        #     await create_duel_channel(message, new_duel)
+        #     initial_sheet_fill(new_duel)
 
     elif message.channel.category_id == int(DUELS_CAT):
         
@@ -214,6 +254,23 @@ async def on_message(message):
         duel_clocks_list = []
 
         await message.channel.send('Duels have been reset')
+
+def check_signed_up(challenger_id):
+    sql = "SELECT * FROM user WHERE user_id = '%s'" % (challenger_id)
+
+    mycursor.execute(sql)
+
+    myresult = mycursor.fetchall()
+
+    return len(myresult) > 0
+
+def add_user(challenger):
+    global mycursor
+
+    sql = "INSERT INTO user (user_id, user_name, joindate, wins, losses, self_cancels, cancels, disputes) VALUES ('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')" % (challenger.id, challenger.name, datetime.datetime.now(), '0', '0', '0', '0', '0')
+    mycursor.execute(sql)
+
+    mydb.commit()
 
 #   confirms the duel and its legality and if legal:
 #       adds the duel to the dictionary
@@ -499,5 +556,5 @@ def retrieve_duel(id_):
 
     return duel_list[id_]
 
-client.loop.create_task(update_cancellation_timers())
+# client.loop.create_task(update_cancellation_timers())
 client.run(TOKEN)
