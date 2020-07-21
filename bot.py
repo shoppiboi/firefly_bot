@@ -11,12 +11,8 @@ import mysql.connector
 import discord
 from dotenv import load_dotenv
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-
 class Duel():
     def __init__(self, challenger_user, defender_user):
-        global row_index
 
         self.challenger = challenger_user
         self.defender = defender_user
@@ -24,17 +20,6 @@ class Duel():
         self.id = create_duel_id(int(self.challenger.id), int(self.defender.id))
 
         self.add_duel()
-        
-        
-        # self.time = self.get_time()
-        # self.row = row_index
-
-        # self.accepted = -1
-        # self.acceptance_limit = self.acceptance_time_limit(self.time)
-
-        # self.duel_clock_index = create_duel_clock(self, 30) #   make this 15 minutes
-
-        # self.cancelled = False
 
     def add_duel(self):
         global mycursor
@@ -145,12 +130,6 @@ mydb = mysql.connector.connect(
 mycursor = mydb.cursor()
 
 
-row_index = 2
-
-worksheet_names = { #  dictionary for index -> name
-                    0: 'Table'
-                } 
-
 cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reasons
                         0: 'The Defender has rejected the duel.', 
                         1: 'The Challenger has cancelled the duel.',        
@@ -238,13 +217,7 @@ async def on_message(message):
             await declare_winner(id_, message.mentions[0], message.channel)
 
     elif message.content == '!reset':
-        # global pending_duel_clocks
-        global duel_clocks_list
-
         await reset_channels(message.guild)
-
-        # pending_duel_clocks = []
-        duel_clocks_list = []
 
         await message.channel.send('Duels have been reset')
 
@@ -377,19 +350,6 @@ async def create_duel_channel(message, duel_):
     response = response.format(defender.mention, challenger.mention)
     await duel_channel.send(response)
 
-#   taps into the gspread API and returns the needed worksheet
-def open_sheets(sheet_index):
-    dir = DIRECTORY_
-
-    scope = ['https://spreadsheets.google.com/feeds',
-            'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(dir, scope)
-    client = gspread.authorize(creds)
-
-    worksheet = client.open('Duel Database').worksheet(get_sheet_name(sheet_index))
-
-    return worksheet
-
 #   deletes all the channels under Duels-category
 async def reset_channels(guild_):
     category = discord.utils.get(guild_.categories, id=int(DUELS_CAT))
@@ -455,8 +415,7 @@ async def false_response(channel, id_):
     mycursor.execute(query)
     mydb.commit()
 
-    response = 'The Duel has been rejected. \n This channel will be deleted in a moment and a confirmation of the duel cancellation will be sent to both parties'
-    await channel.send(response)
+    await cancel_duel(id_, channel, 0)
 
     await asyncio.sleep(10)
     await delete_channel(channel)
@@ -490,32 +449,43 @@ def create_duel_clock(duel, time):
     duel_clocks_list.append(new_timer)
     return (len(duel_clocks_list) - 1) #    returns the length of the list, as the position of the new clock is at the back
 
-async def cancel_duel(duel_, reason_index):
+async def cancel_duel(id_, channel, reason_index):
 
-    guild_reference = duel_.channel_.guild
+    guild_reference = channel.guild
 
-    firelord_role = get_firelord(guild_reference)
-    challenger = duel_.challenger
-    defender = duel_.defender
+    duel_participants = retrieve_participants(id_)
+
     at_everyone = get_at_everyone(guild_reference)
+    firelord_role = get_firelord(guild_reference)
+    challenger = await client.fetch_user(int(duel_participants[0]))
+    defender = await client.fetch_user(int(duel_participants[1]))
 
     overwrites = {
-        firelord_role : discord.PermissionOverwrite(read_messages = True, send_messages = True, read_message_history=True),
+        firelord_role : discord.PermissionOverwrite(read_messages = True, send_messages = True),
 
-        challenger: discord.PermissionOverwrite(read_messages = True, send_messages = False, read_messsage_history=True),
+        challenger: discord.PermissionOverwrite(read_messages = True, send_messages = False),
         
-        defender: discord.PermissionOverwrite(read_messages = True, send_messages = False, read_message_history=True),
+        defender: discord.PermissionOverwrite(read_messages = True, send_messages = False),
 
-        at_everyone : discord.PermissionOverwrite(read_messages = True, send_messages = False, read_message_history=True)
+        at_everyone : discord.PermissionOverwrite(read_messages = True, send_messages = False)
     }
 
-    duel_.channel_.edit(overwrites=overwrites)
+    await channel.edit(overwrites=overwrites)
 
-    await duel_.channel_.send('This duel has been cancelled for the following reason: \n> ' + cancellation_reasons[reason_index] + 
+    await channel.send('This duel has been cancelled for the following reason: \n> ' + cancellation_reasons[reason_index] + 
                                 ' \nBoth participants will be sent a private message with a confirmation \n \n**This channel will be deleted in a moment.**')
 
-    # channels_pending_deletion.append(duel_.channel_)
-    # duels_pending_deletion.append(duel_list.pop(duel_.id))
+    response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
+    response = response.format(defender.name)
+
+    private_channel = await challenger.create_dm()
+    await private_channel.send(response)
+
+    response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
+    response = response.format(challenger.name)
+
+    private_channel = await defender.create_dm()
+    await private_channel.send(response)
 
 def retrieve_duel(id_):
     global mycursor
@@ -527,5 +497,16 @@ def retrieve_duel(id_):
     myresult = mycursor.fetchall()
 
     return myresult[0]
+
+def retrieve_participants(id_):
+    global mycursor
+    
+    query = "SELECT challenger_id, defender_id FROM duel WHERE duel_id = '%s'" % (id_)
+
+    mycursor.execute(query)
+
+    participants = mycursor.fetchall()
+
+    return participants[0]
 
 client.run(TOKEN)
