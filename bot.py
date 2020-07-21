@@ -40,9 +40,16 @@ class Duel():
         global mycursor
         global mydb
 
-        sql = "INSERT INTO duel (duel_id, challenger_id, defender_id, created_at) VALUES ('%s', '%s', '%s', '%s')" % (self.id, self.challenger.id, self.defender.id, self.get_datetime())
+        query = '''INSERT INTO duel (duel_id, challenger_id, defender_id, created_at)
+                VALUES ('%s', '%s', '%s', '%s')
+                ''' % (
+                    self.id, 
+                    self.challenger.id, 
+                    self.defender.id, 
+                    self.get_datetime()
+                )
 
-        mycursor.execute(sql)
+        mycursor.execute(query)
 
         mydb.commit()
 
@@ -59,6 +66,9 @@ class Duel():
 
     def store_channel(self, channel):
         self.channel_ = channel
+
+    # async def accepted_duel(self):
+
 
     async def duel_response(self, indicator, response_index):
         self.cancelled = not int(indicator)
@@ -112,30 +122,6 @@ class Duel():
         sheet.update_cell(self.row, 13, self.winning_time)
         sheet.update_cell(self.row, 14, self.winner.name)
         
-#   Place Duel_Clock
-class Duel_Clock():
-    def __init__(self, duel, time, index):
-        self.duel = duel
-        self.time_ = time
-        self.type = index
-
-    def __del__(self):
-        print(self.duel.id + " Duel Clock being deleted")
-
-    def timeout(self):
-        self.duel.limit_reach()
-
-    def duel_accepted(self, position):
-        self.time = 60
-        self.index = 3
-        
-        global duel_clocks_list
-
-        duel_clocks_list.append(duel_clocks_list.pop(position))
-
-        return len(duel_clocks_list) - 1
-        # active_duel_clocks.append(pending_duel_clocks.pop(self))
-
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -196,6 +182,17 @@ async def on_message(message):
 
         await message.channel.send(response)
     
+    elif message.content == '!signup':
+        
+        if not check_signed_up(message.author.id):
+            add_user(message.author)
+            response = "Profile created. You can now participate in the Duelling system."
+            await message.channel.send(response)
+            return
+
+        response = "You are already signed up."
+        await message.channel.send(response)
+
     elif '!duel' in message.content:
 
         challenger = message.author
@@ -203,35 +200,33 @@ async def on_message(message):
         if not check_signed_up(challenger.id):
             add_user(challenger)
             response = "No profile found in database. New profile has been made for {}."
-            response = resposne.format(challenger.mention)
-            await message.channel.send(resposne)
+            response = response.format(challenger.mention)
+            await message.channel.send(response)
 
-        
         defender = message.mentions[0]
 
         if not check_signed_up(defender.id):
             add_user(defender)
             response = "No profile found in database. New profile has been made for {}."
-            reponse = response.format(defender.mention)
+            response = response.format(defender.mention)
             await message.channel.send(response)
 
         new_duel = Duel(challenger, defender)
 
-        # if create_duel(new_duel):
-        #     await create_duel_channel(message, new_duel)
-        #     initial_sheet_fill(new_duel)
+        if create_duel(new_duel):
+            await create_duel_channel(message, new_duel)
+            # initial_sheet_fill(new_duel)
 
     elif message.channel.category_id == int(DUELS_CAT):
         
         content = message.content
         id_ = int(message.channel.topic[:4])
-        current_duel = retrieve_duel(int(id_))
 
-        if content == '!accept' and current_duel.accepted == -1:
-            await respond_duel(id_, message.author.name, True, None, message.channel)
+        if content == '!accept':
+            await respond_duel(id_, message.author.id, True, None, message.channel)
 
-        elif content == '!reject' and current_duel.accepted == -1:
-            await respond_duel(id_, message.author.name, False, 0, message.channel)
+        elif content == '!reject':
+            await respond_duel(id_, message.author.id, False, 0, message.channel)
 
         elif content == '!cancel' and current_duel.accepted == -1 and message.author.name == current_duel.challenger.name:
             await respond_duel(id_, message.author.name, False, 1, message.channel)
@@ -246,8 +241,6 @@ async def on_message(message):
         # global pending_duel_clocks
         global duel_clocks_list
 
-        reset_sheets()
-
         await reset_channels(message.guild)
 
         # pending_duel_clocks = []
@@ -256,7 +249,7 @@ async def on_message(message):
         await message.channel.send('Duels have been reset')
 
 def check_signed_up(challenger_id):
-    sql = "SELECT * FROM user WHERE user_id = '%s'" % (challenger_id)
+    sql = "SELECT user_id FROM user WHERE user_id = '%s'" % (challenger_id)
 
     mycursor.execute(sql)
 
@@ -266,9 +259,17 @@ def check_signed_up(challenger_id):
 
 def add_user(challenger):
     global mycursor
+    global mydb
 
-    sql = "INSERT INTO user (user_id, user_name, joindate, wins, losses, self_cancels, cancels, disputes) VALUES ('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')" % (challenger.id, challenger.name, datetime.datetime.now(), '0', '0', '0', '0', '0')
-    mycursor.execute(sql)
+    query = '''INSERT INTO user (user_id, user_name, joindate, wins, losses, self_cancels, cancels, disputes) 
+        VALUES ('%s', '%s', '%s', 0, 0, 0, 0, 0)
+        ''' % (
+            challenger.id, 
+            challenger.name, 
+            datetime.datetime.now(), 
+        )
+
+    mycursor.execute(query)
 
     mydb.commit()
 
@@ -342,7 +343,7 @@ async def create_duel_channel(message, duel_):
 
     duel_channel_name = (challenger.name + ' vs ' + defender.name).lower()
 
-    firelord_role = get_firelord(guild_)    #    get highest role
+    firelord_role = get_firelord(guild_)    # get highest role
     at_everyone = get_at_everyone(guild_)
 
     #   apply permits for the channel, where:
@@ -389,16 +390,6 @@ def open_sheets(sheet_index):
 
     return worksheet
 
-#   deletes all entries in the data-table (barring titles)
-def reset_sheets():
-    global row_index
-
-    sheet = open_sheets(0)
-
-    sheet.delete_rows(2, row_index)
-
-    row_index = 2
-
 #   deletes all the channels under Duels-category
 async def reset_channels(guild_):
     category = discord.utils.get(guild_.categories, id=int(DUELS_CAT))
@@ -409,28 +400,6 @@ async def reset_channels(guild_):
 async def delete_channel(channel):
     await channel.delete()
 
-#   returns the name of the sheet for a given index, where
-#   the name is obtained from the worksheet_names dictionary
-def get_sheet_name(index):
-    return worksheet_names[index]
-
-#   fills the google-sheets database with the initial duel information
-#   these being:
-#   duel-id, creation time, challenger name + id, defender name + id
-def initial_sheet_fill(duel_):
-    global row_index
-    
-    sheet = open_sheets(0)
-    
-    sheet.update_cell(row_index, 1, duel_.id)
-    sheet.update_cell(row_index, 2, duel_.time)
-    sheet.update_cell(row_index, 3, duel_.challenger.name)
-    sheet.update_cell(row_index, 4, str(duel_.challenger.id))
-    sheet.update_cell(row_index, 6, duel_.defender.name)
-    sheet.update_cell(row_index, 7, str(duel_.defender.id))
-
-    row_index += 1
-
 #   duel_id is obtained by taking the last four digits of the result of
 #   adding the two players' ID's together and dividing this by two
 def create_duel_id(challenger_id, defender_id):
@@ -439,27 +408,58 @@ def create_duel_id(challenger_id, defender_id):
 
     return int(duel_id)
 
-#   takes the respone of defender
-async def respond_duel(id_, name, response, message_indicator, channel):
+#   takes the response of defender
+async def respond_duel(id_, responder_id, response, message_indicator, channel):
     
     current_duel = retrieve_duel(id_)
 
-    if name == current_duel.defender.name:
-        await current_duel.duel_response(response, message_indicator)
+    responder_id_c = int(responder_id)
 
+    if current_duel[4] != None:
+        response = 'Duel has already been responded to. '
+        return
+
+    if responder_id_c == int(current_duel[2]):
         if response:
-            await true_response(channel)
+            await true_response(channel, id_)
+        else:
+            await false_response(channel, id_)
 
-    elif name == current_duel.challenger.name:
-        response = 'Please allow the defender to !confirm or !reject the duel\n If you, as the **Challenger**, no longer wish to take the duel, please indicate so by typing !cancel'
+    elif responder_id_c == int(current_duel[1]):
+        response = '''Please allow the **Defender** to !confirm or !reject the Duel\nIf you, as the **Challenger**, no longer wish to Duel, then please indicate so by typing !cancel'''
         await channel.send(response)
     else:
-        response = 'You are not a participant to the Duel'
+        response = 'You are not a participant of the Duel'
         await channel.send(response)
 
-async def true_response(channel):
+async def true_response(channel, id_):
+    global mycursor
+    global mydb
+
+    query = "UPDATE duel SET accepted = '{}', accepted_at = '{}' WHERE duel_id = '{}'"
+    query = query.format(1, datetime.datetime.now(), id_)
+
+    mycursor.execute(query)
+    mydb.commit()
+
     response = 'The Duel has been accepted! \n You now have **TWO** hours to complete the Duel! \n Good luck to both and make sure to have fun!'
     await channel.send(response)
+
+async def false_response(channel, id_):
+    global mycursor
+    global mydb
+    
+    query = "UPDATE duel SET accepted  = '{}', ended_at = '{}' WHERE duel_id = '{}'"
+    query = query.format(0, datetime.datetime.now(), id_)
+
+    mycursor.execute(query)
+    mydb.commit()
+
+    response = 'The Duel has been rejected. \n This channel will be deleted in a moment and a confirmation of the duel cancellation will be sent to both parties'
+    await channel.send(response)
+
+    await asyncio.sleep(10)
+    await delete_channel(channel)
 
 async def send_dispute(reason, channel):
 
@@ -490,40 +490,6 @@ def create_duel_clock(duel, time):
     duel_clocks_list.append(new_timer)
     return (len(duel_clocks_list) - 1) #    returns the length of the list, as the position of the new clock is at the back
 
-async def update_cancellation_timers():
-    await client.wait_until_ready()
-
-    while not client.is_closed():
-        try:
-
-            if len(duel_clocks_list) > 0:
-                
-                for element in duel_clocks_list:
-                    element.time_ -= 1
-
-                    if element.time_ <= 0:
-                        element.timeout()
-                        del element
-                        duel_clocks_list.pop(0)
-
-                print(element.duel.id + " " + element.time_)
-
-            if len(channels_pending_deletion) > 0:
-                for channel in channels_pending_deletion:
-                    await delete_channel(channel)
-
-
-            if len(duels_pending_deletion) > 0:
-                for duel in duels_pending_deletion:
-                    await cancel_duel(duel, duel.index)
-                    del duel
-
-
-            await asyncio.sleep(1)
-
-        except:
-            print('Duel clocks not working')
-
 async def cancel_duel(duel_, reason_index):
 
     guild_reference = duel_.channel_.guild
@@ -546,15 +512,20 @@ async def cancel_duel(duel_, reason_index):
     duel_.channel_.edit(overwrites=overwrites)
 
     await duel_.channel_.send('This duel has been cancelled for the following reason: \n> ' + cancellation_reasons[reason_index] + 
-                                ' \nBoth participants will be sent a private message with a confirmation \n \nThis channel will be deleted in a moment.')
+                                ' \nBoth participants will be sent a private message with a confirmation \n \n**This channel will be deleted in a moment.**')
 
-    channels_pending_deletion.append(duel_.channel_)
-    duels_pending_deletion.append(duel_list.pop(duel_.id))
+    # channels_pending_deletion.append(duel_.channel_)
+    # duels_pending_deletion.append(duel_list.pop(duel_.id))
 
 def retrieve_duel(id_):
-    global duel_list
+    global mycursor
 
-    return duel_list[id_]
+    query = "SELECT * FROM duel WHERE duel_id = '%s'" % (id_)
 
-# client.loop.create_task(update_cancellation_timers())
+    mycursor.execute(query)
+
+    myresult = mycursor.fetchall()
+
+    return myresult[0]
+
 client.run(TOKEN)
