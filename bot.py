@@ -54,7 +54,6 @@ class Duel():
 
     # async def accepted_duel(self):
 
-
     async def duel_response(self, indicator, response_index):
         self.cancelled = not int(indicator)
 
@@ -137,18 +136,19 @@ cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reaso
                         3: 'The Duel was not completed within the two hour window.'
                     }
 
-duel_list = {}  #   dictionary for duel_id -> Duel()
+duel_id_list = []  #   dictionary for duel_id -> Duel()
 
 # pending_duel_clocks = []
 duel_clocks_list = []
 
 @client.event
 async def on_ready():
-    global worksheet_names
+    global duel_id_list
 
     worksheet_names = {0: 'Table'}
 
     print(f'{client.user} has connected to Discord')
+    duel_id_list = retrieve_duel_id_list()
 
 @client.event
 async def on_message(message):
@@ -239,7 +239,7 @@ def add_user(challenger):
         ''' % (
             challenger.id, 
             challenger.name, 
-            datetime.datetime.now(), 
+            datetime.datetime.now()
         )
 
     mycursor.execute(query)
@@ -249,56 +249,61 @@ def add_user(challenger):
 #   confirms the duel and its legality and if legal:
 #       adds the duel to the dictionary
 def create_duel(duel_):
-    global duel_list
 
     id_ = duel_.id
+    offset = 0
 
-    if (check_if_allowed(duel_)):
+    while check_duel_id_exists(id_) == False:
+        offset = random.randint(1, 50)
+        id_ += offset
+
+    if check_if_allowed(duel_.challenger.id):
         id_ = check_duel_id(id_)
 
         duel_list[id_] = duel_
 
         return True
     else:
-        return False 
+        return False
 
 #   checks whether the challenger has already created a challenge
 #   or if they have an already out-standing challenge waiting
 #   i.e. multiple people can challenge one person, but one person 
 #   cannot create a challenge before responding to the ones they
 #   have already been provided with
-def check_if_allowed(duel_):
-   
-    global duel_list
+def check_if_allowed(challenger_id):
+    global mycursor
 
-    d_items = duel_list.items()
+    query_options = {
+                        0 : "challenger_id",
+                        1 : "defender_id"
+                }
 
-    for key, value in d_items:
-        if value.challenger == duel_.challenger.name:
+    x = 0
+    while x <= 1:
+        active_option = query_options[x]
+
+        query = "SELECT '%s', ended_at FROM duel WHERE '%s' = '%s'" % (
+            active_option, active_option, challenger_id)
+
+        mycursor.execute(query)
+
+        results = mycursor.fetchall()
+
+        if int(results[0]) == int(challenger_id):
+            print("Hello hello")
             return False
-        
-        if value.defender == duel_.challenger.name:
-            return False
+
+        x += 1
 
     return True
 
 #   if the duel_id already exists within the dictionary
 #   recursively creates a new one
-def check_duel_id(duel_id):
-   
-    global duel_list
+def check_duel_id_exists(duel_id):
+    global duel_id_list
 
-    adjusted_id = duel_id
-
-    d_items = duel_list.items()
-
-    for key, value in d_items:
-        
-        if key == duel_id:
-            new_id = duel_id + random.randint(20, 50)
-            adjusted_id = check_duel_id(duel_list, new_id)
-
-    return adjusted_id
+    return duel_id in duel_id_list
 
 def get_firelord(guild_):
     return guild_.roles[len(guild_.roles) - 1]
@@ -508,5 +513,14 @@ def retrieve_participants(id_):
     participants = mycursor.fetchall()
 
     return participants[0]
+
+def retrieve_duel_id_list():
+    global mycursor
+
+    query = "SELECT duel_id FROM duel"
+
+    mycursor.execute(query)
+
+    return mycursor.fetchall()
 
 client.run(TOKEN)
