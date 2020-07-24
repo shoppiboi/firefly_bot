@@ -12,15 +12,13 @@ import discord
 from dotenv import load_dotenv
 
 class Duel():
-    def __init__(self, challenger_user, defender_user):
+    def __init__(self, duel_id, challenger_user, defender_user):
 
+        self.id_ = duel_id
         self.challenger = challenger_user
         self.defender = defender_user
 
-        self.id = create_duel_id(int(self.challenger.id), int(self.defender.id))
-
-        self.add_duel()
-
+    #   upon creating a new duel, its details are added to the database
     def add_duel(self):
         global mycursor
         global mydb
@@ -28,7 +26,7 @@ class Duel():
         query = '''INSERT INTO duel (duel_id, challenger_id, defender_id, created_at)
                 VALUES ('%s', '%s', '%s', '%s')
                 ''' % (
-                    self.id, 
+                    self.id_, 
                     self.challenger.id, 
                     self.defender.id, 
                     self.get_datetime()
@@ -41,16 +39,17 @@ class Duel():
 
     #   adds fifteen minutes to the creation-time and stores it
     #   Defender has to accept duel by this time or the duel is
-    #   automatically cancelled._
-    def acceptance_time_limit(self, time):
-        return str(str(time)[:3] + str(int(str(time)[3:]) + 15))
+    #   automatically cancelled.
+
+    # def acceptance_time_limit(self, time):
+    #     return str(str(time)[:3] + str(int(str(time)[3:]) + 15))
 
     def get_datetime(self):
-        now = datetime.datetime.now()
-        return now
+        return datetime.datetime.now()
 
+    #   upon creating a text-channel for a duel, a reference to its ID is stored
     def store_channel(self, channel):
-        self.channel_ = channel
+        self.channel_id = channel.id
 
     # async def accepted_duel(self):
 
@@ -62,49 +61,18 @@ class Duel():
         if not self.accepted:
             await cancel_duel(self, response_index)
 
-        else:
-            global duel_clocks_list
-            self.duel_clock_index = duel_clocks_list[self.duel_clock_index].duel_accepted(self.duel_clock_index)
-
-
-        self.response_time = self.get_time()
-
-        self.time_limit = str(int(self.response_time[:2]) + 2) + self.response_time[2:]
-
-        sheet = open_sheets(0)
-
-        sheet.update_cell(self.row, 12, self.time_limit)
-
-        sheet = open_sheets(0)
-
-        sheet.update_cell(self.row, 9, self.accepted)
-        sheet.update_cell(self.row, 10, self.response_time)
-
-    def limit_reach(self):
-
-        self.cancelled = True
-
-        self.winning_time = "N/A"
-        self.winner = "N/A"
-
-        sheet = open_sheets(0)
-
-        sheet.update_cell(self.row, 11, '*')
-        sheet.update_cell(self.row, 13, self.winning_time)
-        sheet.update_cell(self.row, 14, self.winner)
-
     def set_winner(self, winner):
-        if self.cancelled:
-            print('This duel has been cancelled')   
-            return
+        global mycursor
+        global mydb
 
-        self.winning_time = self.get_time()
-        self.winner = winner
+        query = "UPDATE duel SET ended_at = '{}', winner_id = '{}' WHERE duel_id = {}"
+        query = query.format(self.get_datetime(), winner.id, self.id_)
 
-        sheet = open_sheets(0)
+        mycursor.execute(query)
+        mydb.commit()
 
-        sheet.update_cell(self.row, 13, self.winning_time)
-        sheet.update_cell(self.row, 14, self.winner.name)
+        # self.winning_time = self.get_time()
+        # self.winner = winner
         
 load_dotenv()
 
@@ -128,7 +96,6 @@ mydb = mysql.connector.connect(
 
 mycursor = mydb.cursor()
 
-
 cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reasons
                         0: 'The Defender has rejected the duel.', 
                         1: 'The Challenger has cancelled the duel.',        
@@ -136,19 +103,15 @@ cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reaso
                         3: 'The Duel was not completed within the two hour window.'
                     }
 
-duel_id_list = []  #   dictionary for duel_id -> Duel()
-
-# pending_duel_clocks = []
-duel_clocks_list = []
+duel_dictionary = {}  #   dictionary for duel_id -> Duel()
 
 @client.event
 async def on_ready():
-    global duel_id_list
-
-    worksheet_names = {0: 'Table'}
+    global duel_dictionary
 
     print(f'{client.user} has connected to Discord')
-    duel_id_list = retrieve_duel_id_list()
+    fill_duel_dictinary()
+
 
 @client.event
 async def on_message(message):
@@ -174,6 +137,11 @@ async def on_message(message):
 
     elif '!duel' in message.content:
 
+        if len(message.mentions) == 0:
+            response = "Please @-mention the person you wish to duel"
+            await message.channel.send(response)
+            return
+
         challenger = message.author
 
         if not check_signed_up(challenger.id):
@@ -190,11 +158,19 @@ async def on_message(message):
             response = response.format(defender.mention)
             await message.channel.send(response)
 
-        new_duel = Duel(challenger, defender)
+        duel_id = create_duel_id(challenger.id, defender.id)
 
-        if create_duel(new_duel):
+        duel_id = pre_duel_creation(duel_id, challenger.id)
+
+        global duel_dictionary
+
+        if duel_id != -1:
+            new_duel = Duel(duel_id, challenger, defender)
+            duel_dictionary[duel_id] = new_duel
+
+            new_duel.add_duel()
+
             await create_duel_channel(message, new_duel)
-            # initial_sheet_fill(new_duel)
 
     elif message.channel.category_id == int(DUELS_CAT):
         
@@ -202,10 +178,10 @@ async def on_message(message):
         id_ = int(message.channel.topic[:4])
 
         if content == '!accept':
-            await respond_duel(id_, message.author.id, True, None, message.channel)
+            await respond_duel(id_, message.author.id, True, message.channel)
 
         elif content == '!reject':
-            await respond_duel(id_, message.author.id, False, 0, message.channel)
+            await respond_duel(id_, message.author.id, False, message.channel)
 
         elif content == '!cancel' and current_duel.accepted == -1 and message.author.name == current_duel.challenger.name:
             await respond_duel(id_, message.author.name, False, 1, message.channel)
@@ -248,23 +224,17 @@ def add_user(challenger):
 
 #   confirms the duel and its legality and if legal:
 #       adds the duel to the dictionary
-def create_duel(duel_):
-
-    id_ = duel_.id
+def pre_duel_creation(id_, challenger_id):
     offset = 0
 
-    while check_duel_id_exists(id_) == False:
+    while check_duel_id_exists(id_) != False:
         offset = random.randint(1, 50)
         id_ += offset
 
-    if check_if_allowed(duel_.challenger.id):
-        id_ = check_duel_id(id_)
-
-        duel_list[id_] = duel_
-
-        return True
+    if check_if_allowed(challenger_id):
+        return id_
     else:
-        return False
+        return -1
 
 #   checks whether the challenger has already created a challenge
 #   or if they have an already out-standing challenge waiting
@@ -290,8 +260,7 @@ def check_if_allowed(challenger_id):
 
         results = mycursor.fetchall()
 
-        if int(results[0]) == int(challenger_id):
-            print("Hello hello")
+        if len(results) > 0 and int(results[0]) == int(challenger_id):
             return False
 
         x += 1
@@ -301,9 +270,9 @@ def check_if_allowed(challenger_id):
 #   if the duel_id already exists within the dictionary
 #   recursively creates a new one
 def check_duel_id_exists(duel_id):
-    global duel_id_list
+    global duel_dictionary
 
-    return duel_id in duel_id_list
+    return duel_id in duel_dictionary.keys()
 
 def get_firelord(guild_):
     return guild_.roles[len(guild_.roles) - 1]
@@ -312,12 +281,13 @@ def get_at_everyone(guild_):
     return guild_.default_role
 
 #   creates the channel for a given duel
-async def create_duel_channel(message, duel_):
+async def create_duel_channel(message_, duel_):
 
+    guild_ = message_.guild
+
+    id_ = duel_.id_
     challenger = duel_.challenger
     defender = duel_.defender
-    id_ = duel_.id
-    guild_ = message.guild
 
     duel_channel_name = (challenger.name + ' vs ' + defender.name).lower()
 
@@ -349,7 +319,7 @@ async def create_duel_channel(message, duel_):
     response = 'New challenge created with ID: ' + str(id_) + "\n Head over to {} for more details."
     response = response.format(duel_channel.mention)
 
-    await message.channel.send(response)
+    await message_.channel.send(response)
 
     response = '{} has been challenged by {} \n Please type !accept or !reject in accordance to what you wish to do with this challenge.'
     response = response.format(defender.mention, challenger.mention)
@@ -374,25 +344,25 @@ def create_duel_id(challenger_id, defender_id):
     return int(duel_id)
 
 #   takes the response of defender
-async def respond_duel(id_, responder_id, response, message_indicator, channel):
+async def respond_duel(id_, responder_id, response, channel):
     
     current_duel = retrieve_duel(id_)
 
-    responder_id_c = int(responder_id)
-
     if current_duel[4] != None:
-        response = 'Duel has already been responded to. '
+        response = 'Duel has already been responded to.'
         return
 
-    if responder_id_c == int(current_duel[2]):
-        if response:
-            await true_response(channel, id_)
-        else:
-            await false_response(channel, id_)
+    #   if the id of the responder matches that of the defender
+    if int(responder_id) == int(current_duel[2]):
 
-    elif responder_id_c == int(current_duel[1]):
+        await true_response(channel, id_) if response else await false_response(channel, id_)
+        
+    #   if the id of the responder matches that of the challenger
+    elif int(responder_id) == int(current_duel[1]):
         response = '''Please allow the **Defender** to !confirm or !reject the Duel\nIf you, as the **Challenger**, no longer wish to Duel, then please indicate so by typing !cancel'''
         await channel.send(response)
+    
+    #   else
     else:
         response = 'You are not a participant of the Duel'
         await channel.send(response)
@@ -493,15 +463,9 @@ async def cancel_duel(id_, channel, reason_index):
     await private_channel.send(response)
 
 def retrieve_duel(id_):
-    global mycursor
+    global duel_dictionary
 
-    query = "SELECT * FROM duel WHERE duel_id = '%s'" % (id_)
-
-    mycursor.execute(query)
-
-    myresult = mycursor.fetchall()
-
-    return myresult[0]
+    return duel_dictionary[id_]
 
 def retrieve_participants(id_):
     global mycursor
@@ -514,13 +478,19 @@ def retrieve_participants(id_):
 
     return participants[0]
 
-def retrieve_duel_id_list():
+#   upon activating the bot, fills duel_dictionary with currently active duels
+def fill_duel_dictinary():
     global mycursor
+    global duel_dictionary
 
-    query = "SELECT duel_id FROM duel"
+    query = "SELECT duel_id, challenger_id, defender_id FROM duel WHERE ended_at IS NULL"
 
     mycursor.execute(query)
 
-    return mycursor.fetchall()
+    active_duels = mycursor.fetchall()
+
+    for duel in active_duels:
+        duel_instance = Duel(duel[0], duel[1], duel[2])
+        duel_dictionary[duel[0]] = duel_instance
 
 client.run(TOKEN)
