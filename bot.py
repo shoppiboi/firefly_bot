@@ -12,11 +12,12 @@ import discord
 from dotenv import load_dotenv
 
 class Duel():
-    def __init__(self, duel_id, challenger_user, defender_user):
+    def __init__(self, duel_id, challenger_user, defender_user, accepted_):
 
         self.id_ = duel_id
         self.challenger = challenger_user
         self.defender = defender_user
+        self.accepted = accepted_
 
     #   upon creating a new duel, its details are added to the database
     def add_duel(self):
@@ -165,7 +166,7 @@ async def on_message(message):
         global duel_dictionary
 
         if duel_id != -1:
-            new_duel = Duel(duel_id, challenger, defender)
+            new_duel = Duel(duel_id, challenger, defender, False)
             duel_dictionary[duel_id] = new_duel
 
             new_duel.add_duel()
@@ -187,9 +188,21 @@ async def on_message(message):
             await respond_duel(id_, message.author.name, False, 1, message.channel)
 
         elif '!dispute' in content:
-            await send_dispute(content.split(" ", 1)[1], message.channel)
+            dispute_reason = "No reason given"
+
+            split = content.split(" ", 1)
+            if len(split) > 1: #    if a reason has been given, the string is changed to that
+                dispute_reason = split[1]
+
+            await send_dispute(dispute_reason, message.channel)
 
         elif '!winner' in content:
+
+            if len(message.mentions) == 0:
+                response = "Please @-mention the winner of the duel"
+                await message.channel.send(response)
+                return
+
             await declare_winner(id_, message.mentions[0], message.channel)
 
     elif message.content == '!reset':
@@ -270,9 +283,19 @@ def check_if_allowed(challenger_id):
 #   if the duel_id already exists within the dictionary
 #   recursively creates a new one
 def check_duel_id_exists(duel_id):
-    global duel_dictionary
+    global mycursor
 
-    return duel_id in duel_dictionary.keys()
+    query = "SELECT duel_id FROM duel"
+
+    mycursor.execute(query)
+
+    duel_ids = mycursor.fetchall()
+
+    for id_ in duel_ids:
+        if int(duel_id) == int(id_[0]):
+            return True
+        
+    return False
 
 def get_firelord(guild_):
     return guild_.roles[len(guild_.roles) - 1]
@@ -348,17 +371,17 @@ async def respond_duel(id_, responder_id, response, channel):
     
     current_duel = retrieve_duel(id_)
 
-    if current_duel[4] != None:
-        response = 'Duel has already been responded to.'
-        return
+    # if current_duel[4] != None:
+    #     response = 'Duel has already been responded to.'
+    #     return
 
     #   if the id of the responder matches that of the defender
-    if int(responder_id) == int(current_duel[2]):
+    if int(responder_id) == int(current_duel.defender):
 
         await true_response(channel, id_) if response else await false_response(channel, id_)
         
     #   if the id of the responder matches that of the challenger
-    elif int(responder_id) == int(current_duel[1]):
+    elif int(responder_id) == int(current_duel.challenger):
         response = '''Please allow the **Defender** to !confirm or !reject the Duel\nIf you, as the **Challenger**, no longer wish to Duel, then please indicate so by typing !cancel'''
         await channel.send(response)
     
@@ -416,7 +439,7 @@ async def declare_winner(id_, winner, channel):
 
     await channel.edit(topic=str(id_) + " WINNER: " + winner.name)
 
-    response = 'The winner of Duel ' + str(id_) + ' is: **' + winner.name + '** !\n 🥳🎉 **Congratulations!** 🥳🎉'
+    response = ('The winner of Duel ' + str(id_) + ' is: **' + winner.name + '** !\n 🥳🎉 **Congratulations!** 🥳🎉\n This channel will be deleted in **5 minutes**. If you wish to dispute the duel, please indicate so by typing **!dispute**')
     await channel.send(response)
 
 def create_duel_clock(duel, time):
@@ -483,14 +506,14 @@ def fill_duel_dictinary():
     global mycursor
     global duel_dictionary
 
-    query = "SELECT duel_id, challenger_id, defender_id FROM duel WHERE ended_at IS NULL"
+    query = "SELECT duel_id, challenger_id, defender_id, accepted FROM duel WHERE ended_at IS NULL"
 
     mycursor.execute(query)
 
     active_duels = mycursor.fetchall()
 
     for duel in active_duels:
-        duel_instance = Duel(duel[0], duel[1], duel[2])
+        duel_instance = Duel(duel[0], duel[1], duel[2], False if duel[3] == "None" else True)
         duel_dictionary[duel[0]] = duel_instance
 
 client.run(TOKEN)
