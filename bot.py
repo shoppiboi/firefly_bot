@@ -28,8 +28,8 @@ class Duel():
                 VALUES ('%s', '%s', '%s', '%s')
                 ''' % (
                     self.id_, 
-                    self.challenger.id, 
-                    self.defender.id, 
+                    self.challenger, 
+                    self.defender, 
                     self.get_datetime()
                 )
 
@@ -62,18 +62,27 @@ class Duel():
         if not self.accepted:
             await cancel_duel(self, response_index)
 
-    def set_winner(self, winner):
+    def set_winner(self, challenger_wins):
         global mycursor
         global mydb
 
         query = "UPDATE duel SET ended_at = '{}', winner_id = '{}' WHERE duel_id = {}"
-        query = query.format(self.get_datetime(), winner.id, self.id_)
+        query = query.format(self.get_datetime(), self.challenger if challenger_wins else self.defender, self.id_)
 
         mycursor.execute(query)
         mydb.commit()
 
-        # self.winning_time = self.get_time()
-        # self.winner = winner
+        query = "UPDATE user SET wins = wins + 1 WHERE user_id = '%s'"
+        query = query % (self.challenger if challenger_wins else self.defender)
+
+        mycursor.execute(query)
+        mydb.commit()
+
+        query = "UPDATE user SET losses = losses + 1 WHERE user_id = '%s'"
+        query = query % (self.challenger if not challenger_wins else self.defender)
+
+        mycursor.execute(query)
+        mydb.commit()
         
 load_dotenv()
 
@@ -88,16 +97,17 @@ DB_USERNAME = os.getenv('USERNAME')
 DB_PASSWORD = os.getenv('PASSWORD')
 DB_DATABASE = os.getenv('DATABASE')
 
+RESET_PASSWORD = os.getenv('RESET_PASSWORD')
+
 mydb = mysql.connector.connect(
     host = 'localhost',
     user = 'testuser',
     password = DB_PASSWORD,
     database= DB_DATABASE
 )
-
 mycursor = mydb.cursor()
 
-cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reasons
+cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reason
                         0: 'The Defender has rejected the duel.', 
                         1: 'The Challenger has cancelled the duel.',        
                         2: 'The Defender has failed to respond to the duel in time.',
@@ -105,6 +115,7 @@ cancellation_reasons = {    #   dictionary for  index -> duel-cancellation reaso
                     }
 
 duel_dictionary = {}  #   dictionary for duel_id -> Duel()
+pending_delete = {} #dictionary for duel_id -> Duel-to-be-deleted
 
 @client.event
 async def on_ready():
@@ -172,6 +183,9 @@ async def on_message(message):
             new_duel.add_duel()
 
             await create_duel_channel(message, new_duel)
+        
+        else:
+            response = "You already have outstanding duels. Please respond to them before creating a new one."
 
     elif message.channel.category_id == int(DUELS_CAT):
         
@@ -184,8 +198,8 @@ async def on_message(message):
         elif content == '!reject':
             await respond_duel(id_, message.author.id, False, message.channel)
 
-        elif content == '!cancel' and current_duel.accepted == -1 and message.author.name == current_duel.challenger.name:
-            await respond_duel(id_, message.author.name, False, 1, message.channel)
+        # elif content == '!cancel' and current_duel.accepted == -1 and message.author.name == current_duel.challenger.name:
+        #     await respond_duel(id_, message.author.name, False, 1, message.channel)
 
         elif '!dispute' in content:
             dispute_reason = "No reason given"
@@ -205,10 +219,17 @@ async def on_message(message):
 
             await declare_winner(id_, message.mentions[0], message.channel)
 
-    elif message.content == '!reset':
-        await reset_channels(message.guild)
+    elif '!reset' in message.content:
+        if check_for_reset(message):
+            await message.channel.send("vibe")
+        else:
+            await message.channel.send("not vibe")
 
-        await message.channel.send('Duels have been reset')
+        await message.delete()
+
+        # await reset_channels(message.guild)
+
+        # await message.channel.send('Duels have been reset')
 
 def check_signed_up(challenger_id):
     sql = "SELECT user_id FROM user WHERE user_id = '%s'" % (challenger_id)
@@ -235,6 +256,29 @@ def add_user(challenger):
 
     mydb.commit()
 
+def check_for_reset(message):
+
+    firelord_role = get_firelord(message.guild)
+
+    split = message.content.split( )
+    print(split)
+
+    if firelord_role.name.lower() not in [y.name.lower() for y in message.author.roles]:
+        print("role")
+        return False
+
+    print(len(split))
+
+    if len(split) != 2: 
+        print("len")
+        return False
+
+    if split[1].lower() != RESET_PASSWORD:
+        print("pw")
+        return False
+
+    return True
+
 #   confirms the duel and its legality and if legal:
 #       adds the duel to the dictionary
 def pre_duel_creation(id_, challenger_id):
@@ -247,6 +291,7 @@ def pre_duel_creation(id_, challenger_id):
     if check_if_allowed(challenger_id):
         return id_
     else:
+        print("ayoooo")
         return -1
 
 #   checks whether the challenger has already created a challenge
@@ -256,29 +301,23 @@ def pre_duel_creation(id_, challenger_id):
 #   have already been provided with
 def check_if_allowed(challenger_id):
     global mycursor
+        
+    active_duels = []
 
-    query_options = {
-                        0 : "challenger_id",
-                        1 : "defender_id"
-                }
+    query = "SELECT duel_id FROM duel WHERE challenger_id = '%s' AND ended_at IS NULL" % (challenger_id)
+    mycursor.execute(query)
+    results = mycursor.fetchall()
 
-    x = 0
-    while x <= 1:
-        active_option = query_options[x]
+    active_duels.extend(results)
 
-        query = "SELECT '%s', ended_at FROM duel WHERE '%s' = '%s'" % (
-            active_option, active_option, challenger_id)
+    query = "SELECT duel_id FROM duel WHERE defender_id = '%s' AND ended_at IS NULL" % (challenger_id)
+    mycursor.execute(query)
+    results = mycursor.fetchall()
 
-        mycursor.execute(query)
+    active_duels.extend(results)
 
-        results = mycursor.fetchall()
+    return not (len(active_duels) > 0)
 
-        if len(results) > 0 and int(results[0]) == int(challenger_id):
-            return False
-
-        x += 1
-
-    return True
 
 #   if the duel_id already exists within the dictionary
 #   recursively creates a new one
@@ -306,6 +345,9 @@ def get_at_everyone(guild_):
 #   creates the channel for a given duel
 async def create_duel_channel(message_, duel_):
 
+    global firelord_role
+    global at_everyone_role
+
     guild_ = message_.guild
 
     id_ = duel_.id_
@@ -313,9 +355,6 @@ async def create_duel_channel(message_, duel_):
     defender = duel_.defender
 
     duel_channel_name = (challenger.name + ' vs ' + defender.name).lower()
-
-    firelord_role = get_firelord(guild_)    # get highest role
-    at_everyone = get_at_everyone(guild_)
 
     #   apply permits for the channel, where:
     #       -   Moderators get to do whatever they wish
@@ -328,7 +367,7 @@ async def create_duel_channel(message_, duel_):
         
         defender: discord.PermissionOverwrite(read_messages = True, send_messages = True),
 
-        at_everyone : discord.PermissionOverwrite(read_messages = True, send_messages = False)
+        at_everyone_role : discord.PermissionOverwrite(read_messages = True, send_messages = False)
     }
 
     #   create the duel-channel for the two participants under the Duels category
@@ -419,9 +458,9 @@ async def false_response(channel, id_):
     await delete_channel(channel)
 
 async def send_dispute(reason, channel):
+    global firelord_role
 
     mod_channel = await client.fetch_channel(int(MOD_CHANNEL_ID))
-    firelord_role =  channel.guild.roles[len(channel.guild.roles) - 1]  #   Firelord is the highest rank in the server
        
     response = '{}\nDuel ' + channel.topic[:4] + ' has been disputed with the following reason: \n> ' + reason + ' \n \nChannel link: {}'
     response = response.format(firelord_role.mention, channel.mention)
@@ -434,6 +473,9 @@ async def send_dispute(reason, channel):
 async def declare_winner(id_, winner, channel):
     
     current_duel = retrieve_duel(id_)
+
+    if winner.id == current_duel.challenger:
+
 
     current_duel.set_winner(winner)
 
@@ -448,13 +490,13 @@ def create_duel_clock(duel, time):
     return (len(duel_clocks_list) - 1) #    returns the length of the list, as the position of the new clock is at the back
 
 async def cancel_duel(id_, channel, reason_index):
+    global firelord_role
+    global at_everyone_role
 
     guild_reference = channel.guild
 
     duel_participants = retrieve_participants(id_)
 
-    at_everyone = get_at_everyone(guild_reference)
-    firelord_role = get_firelord(guild_reference)
     challenger = await client.fetch_user(int(duel_participants[0]))
     defender = await client.fetch_user(int(duel_participants[1]))
 
@@ -465,7 +507,7 @@ async def cancel_duel(id_, channel, reason_index):
         
         defender: discord.PermissionOverwrite(read_messages = True, send_messages = False),
 
-        at_everyone : discord.PermissionOverwrite(read_messages = True, send_messages = False)
+        at_everyone_role : discord.PermissionOverwrite(read_messages = True, send_messages = False)
     }
 
     await channel.edit(overwrites=overwrites)
