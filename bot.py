@@ -28,8 +28,8 @@ class Duel():
                 VALUES ('%s', '%s', '%s', '%s')
                 ''' % (
                     self.id_, 
-                    self.challenger, 
-                    self.defender, 
+                    self.challenger.id, 
+                    self.defender.id, 
                     self.get_datetime()
                 )
 
@@ -67,20 +67,18 @@ class Duel():
         global mydb
 
         query = "UPDATE duel SET ended_at = '{}', winner_id = '{}' WHERE duel_id = {}"
-        query = query.format(self.get_datetime(), self.challenger if challenger_wins else self.defender, self.id_)
-
+        query = query.format(self.get_datetime(), self.challenger.id if challenger_wins else self.defender.id, self.id_)
         mycursor.execute(query)
         mydb.commit()
 
         query = "UPDATE user SET wins = wins + 1 WHERE user_id = '%s'"
-        query = query % (self.challenger if challenger_wins else self.defender)
-
+        query = query % (self.challenger.id if challenger_wins else self.defender.id)
         mycursor.execute(query)
         mydb.commit()
 
         query = "UPDATE user SET losses = losses + 1 WHERE user_id = '%s'"
-        query = query % (self.challenger if not challenger_wins else self.defender)
-
+        #   changed this (query) to be other way around for the sake of readability
+        query = query % (self.defender.id if challenger_wins else self.challenger.id)
         mycursor.execute(query)
         mydb.commit()
         
@@ -231,6 +229,11 @@ async def on_message(message):
 
         # await message.channel.send('Duels have been reset')
 
+    elif '!stats' in message.content:
+        print("here are you stats")
+
+
+
 def check_signed_up(challenger_id):
     sql = "SELECT user_id FROM user WHERE user_id = '%s'" % (challenger_id)
 
@@ -291,7 +294,6 @@ def pre_duel_creation(id_, challenger_id):
     if check_if_allowed(challenger_id):
         return id_
     else:
-        print("ayoooo")
         return -1
 
 #   checks whether the challenger has already created a challenge
@@ -345,14 +347,13 @@ def get_at_everyone(guild_):
 #   creates the channel for a given duel
 async def create_duel_channel(message_, duel_):
 
-    global firelord_role
-    global at_everyone_role
-
     guild_ = message_.guild
 
     id_ = duel_.id_
     challenger = duel_.challenger
     defender = duel_.defender
+    firelord_role = get_firelord(message_.guild)
+    at_everyone_role = get_at_everyone(message_.guild)
 
     duel_channel_name = (challenger.name + ' vs ' + defender.name).lower()
 
@@ -474,8 +475,9 @@ async def declare_winner(id_, winner, channel):
     
     current_duel = retrieve_duel(id_)
 
-    if winner.id == current_duel.challenger:
-
+    indicator = False
+    if winner.id == current_duel.challenger.id:
+        indicator = True
 
     current_duel.set_winner(winner)
 
@@ -555,7 +557,7 @@ def fill_duel_dictinary():
     active_duels = mycursor.fetchall()
 
     for duel in active_duels:
-        duel_instance = Duel(duel[0], duel[1], duel[2], False if duel[3] == "None" else True)
+        duel_instance = Duel(duel[0], client.fetch_user(duel[1]), client.fetch_user(duel[2]), False if duel[3] == "None" else True)
         duel_dictionary[duel[0]] = duel_instance
 
 client.run(TOKEN)
