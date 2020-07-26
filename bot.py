@@ -24,14 +24,13 @@ class Duel():
         global mycursor
         global mydb
 
-        query = '''INSERT INTO duel (duel_id, challenger_id, defender_id, created_at)
-                VALUES ('%s', '%s', '%s', '%s')
-                ''' % (
-                    self.id_, 
-                    self.challenger.id, 
-                    self.defender.id, 
-                    self.get_datetime()
-                )
+        query = f'''INSERT INTO duel (duel_id, challenger_id, defender_id, created_at)
+                   VALUES (
+                    '{self.id_}', 
+                    '{self.challenger.id}', 
+                    '{self.defender.id}', 
+                    '{self.get_datetime()}'
+                   )'''
 
         mycursor.execute(query)
 
@@ -66,19 +65,23 @@ class Duel():
         global mycursor
         global mydb
 
-        query = "UPDATE duel SET ended_at = '{}', winner_id = '{}' WHERE duel_id = {}"
-        query = query.format(self.get_datetime(), self.challenger.id if challenger_wins else self.defender.id, self.id_)
+        query = f'''UPDATE duel 
+                    SET 
+                    ended_at = '{self.get_datetime}', 
+                    winner_id = '{self.challenger.id if challenger_wins else self.defender.id}' 
+                    WHERE duel_id = '{self.id_}' '''
         mycursor.execute(query)
         mydb.commit()
 
-        query = "UPDATE user SET wins = wins + 1 WHERE user_id = '%s'"
-        query = query % (self.challenger.id if challenger_wins else self.defender.id)
+        query = f'''UPDATE user 
+                    SET wins = wins + 1 
+                    WHERE user_id = '{self.challenger.id if challenger_wins else self.defender.id}' '''
         mycursor.execute(query)
         mydb.commit()
 
-        query = "UPDATE user SET losses = losses + 1 WHERE user_id = '%s'"
-        #   changed this (query) to be other way around for the sake of readability
-        query = query % (self.defender.id if challenger_wins else self.challenger.id)
+        query = f'''UPDATE user 
+                    SET losses = losses + 1 
+                    WHERE user_id = '{self.id_}' '''
         mycursor.execute(query)
         mydb.commit()
         
@@ -244,7 +247,9 @@ async def on_message(message):
 
 
 def check_signed_up(challenger_id):
-    sql = "SELECT user_id FROM user WHERE user_id = '%s'" % (challenger_id)
+    sql = f'''SELECT user_id 
+             FROM user 
+             WHERE user_id = '{challenger_id}' '''
 
     mycursor.execute(sql)
 
@@ -256,13 +261,13 @@ def add_user(challenger):
     global mycursor
     global mydb
 
-    query = '''INSERT INTO user (user_id, user_name, joindate, wins, losses, self_cancels, cancels, disputes) 
-        VALUES ('%s', '%s', '%s', 0, 0, 0, 0, 0)
-        ''' % (
-            challenger.id, 
-            challenger.name, 
-            datetime.datetime.now()
-        )
+    query = f'''INSERT INTO user (user_id, user_name, joindate, wins, losses, self_cancels, cancels, disputes)
+            VALUES (
+            '{challenger.id}', 
+            '{challenger.name}', 
+            '{datetime.datetime.now()}', 
+             0, 0, 0, 0, 0
+            )'''
 
     mycursor.execute(query)
 
@@ -315,13 +320,17 @@ def check_if_allowed(challenger_id):
         
     active_duels = []
 
-    query = "SELECT duel_id FROM duel WHERE challenger_id = '%s' AND ended_at IS NULL" % (challenger_id)
+    query = f'''SELECT duel_id 
+               FROM duel 
+               WHERE challenger_id = '{challenger_id}' AND ended_at IS NULL' '''
     mycursor.execute(query)
     results = mycursor.fetchall()
 
     active_duels.extend(results)
 
-    query = "SELECT duel_id FROM duel WHERE defender_id = '%s' AND ended_at IS NULL" % (challenger_id)
+    query = f'''SELECT duel_id 
+               FROM duel 
+               WHERE defender_id = '{challenger_id}' AND ended_at IS NULL'''
     mycursor.execute(query)
     results = mycursor.fetchall()
 
@@ -335,7 +344,8 @@ def check_if_allowed(challenger_id):
 def check_duel_id_exists(duel_id):
     global mycursor
 
-    query = "SELECT duel_id FROM duel"
+    query = '''SELECT duel_id 
+              FROM duel'''
 
     mycursor.execute(query)
 
@@ -467,9 +477,9 @@ async def false_response(channel, id_):
     global mycursor
     global mydb
     
-    query = "UPDATE duel SET accepted  = '{}', ended_at = '{}' WHERE duel_id = '{}'"
-    query = query.format(0, datetime.datetime.now(), id_)
-
+    query = f'''UPDATE duel 
+                SET accepted  = 0, ended_at = '{datetime.datetime.now()}' 
+                WHERE duel_id = '{id_}' '''
     mycursor.execute(query)
     mydb.commit()
 
@@ -568,7 +578,9 @@ def retrieve_duel(id_):
 def retrieve_participants(id_):
     global mycursor
     
-    query = "SELECT challenger_id, defender_id FROM duel WHERE duel_id = '%s'" % (id_)
+    query = f'''SELECT challenger_id, defender_id 
+               FROM duel 
+               WHERE duel_id = '{id_}' '''
 
     mycursor.execute(query)
 
@@ -581,7 +593,9 @@ async def fill_duel_dictinary():
     global mycursor
     global duel_dictionary
 
-    query = "SELECT duel_id, challenger_id, defender_id, accepted FROM duel WHERE ended_at IS NULL"
+    query = '''SELECT duel_id, challenger_id, defender_id, accepted 
+               FROM duel 
+               WHERE ended_at IS NULL'''
 
     mycursor.execute(query)
 
@@ -594,10 +608,13 @@ async def fill_duel_dictinary():
         duel_instance = Duel(duel[0], challenger, defender, False if duel[3] == "None" else True)
         duel_dictionary[duel[0]] = duel_instance
 
+#   retrieve win/loss/total/winrate stats 
 def retrieve_wltwr(user_id):
     global mycursor
 
-    query = f"SELECT wins, losses FROM user WHERE user_id = {user_id}"
+    query = f'''SELECT wins, losses 
+                FROM user 
+                WHERE user_id = {user_id}' '''
     mycursor.execute(query)
 
     stats = mycursor.fetchall()
@@ -612,7 +629,10 @@ def retrieve_wltwr(user_id):
 async def retrieve_last_duel(user_id):
     global mycursor
 
-    query = f'SELECT IF(challenger_id = {user_id}, defender_id, challenger_id), created_at FROM duel WHERE challenger_id = {user_id} OR defender_id = {user_id} ORDER BY created_at DESC'
+    query = f'''SELECT IF(challenger_id = {user_id}, defender_id, challenger_id), created_at 
+                FROM duel 
+                WHERE challenger_id = {user_id} OR defender_id = {user_id} 
+                ORDER BY created_at DESC'''
 
     mycursor.execute(query)
 
@@ -643,7 +663,9 @@ async def retrieve_player_stats(user_id, channel):
                             icon_url=user.avatar_url)
     await channel.send(embed=embed_message)
 
-    query = "SELECT wins, losses FROM user WHERE user_id = '%s'" % (user_id)
+    query = f'''SELECT wins, losses 
+                FROM user 
+                WHERE user_id = {user_id}'''
     mycursor.execute(query)
 
     stats = mycursor.fetchall()
