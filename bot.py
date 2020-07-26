@@ -97,6 +97,8 @@ DB_DATABASE = os.getenv('DATABASE')
 
 RESET_PASSWORD = os.getenv('RESET_PASSWORD')
 
+colour_code = 0xF68329
+
 mydb = mysql.connector.connect(
     host = 'localhost',
     user = 'testuser',
@@ -120,7 +122,7 @@ async def on_ready():
     global duel_dictionary
 
     print(f'{client.user} has connected to Discord')
-    fill_duel_dictinary()
+    await fill_duel_dictinary()
 
 
 @client.event
@@ -130,20 +132,21 @@ async def on_message(message):
         return
 
     if (message.content == "hello"):
-        response = "'ello 'ello 'ello. You got a loicense for that gree'ing mate?"
-
-        await message.channel.send(response)
+        response = discord.Embed(title="'ello 'ello 'ello. You got a loicense for that gree'ing mate?")
+        await message.channel.send(embed=response)
     
     elif message.content == '!signup':
         
         if not check_signed_up(message.author.id):
             add_user(message.author)
-            response = "Profile created. You can now participate in the Duelling system."
-            await message.channel.send(response)
+            response = discord.Embed(description="Profile created. You can now participate in the Duelling system.", 
+                                    color=colour_code)
+            await message.channel.send(embed=response)
             return
 
-        response = "You are already signed up."
-        await message.channel.send(response)
+        response = discord.Embed(title="You are already signed up.", 
+                                color=colour_code)
+        await message.channel.send(embed=response)
 
     elif '!duel' in message.content:
 
@@ -156,7 +159,9 @@ async def on_message(message):
 
         if not check_signed_up(challenger.id):
             add_user(challenger)
-            response = "No profile found in database. New profile has been made for {}."
+            response = discord.Embed(title="No profile found in database.", 
+                                    description="New profile has been made for {}.", 
+                                    color=colour_code)
             response = response.format(challenger.mention)
             await message.channel.send(response)
 
@@ -164,7 +169,9 @@ async def on_message(message):
 
         if not check_signed_up(defender.id):
             add_user(defender)
-            response = "No profile found in database. New profile has been made for {}."
+            response = discord.Embed(title="No profile found in database.", 
+                                    description="New profile has been made for {}.", 
+                                    color=colour_code)
             response = response.format(defender.mention)
             await message.channel.send(response)
 
@@ -209,7 +216,6 @@ async def on_message(message):
             await send_dispute(dispute_reason, message.channel)
 
         elif '!winner' in content:
-
             if len(message.mentions) == 0:
                 response = "Please @-mention the winner of the duel"
                 await message.channel.send(response)
@@ -230,7 +236,10 @@ async def on_message(message):
         # await message.channel.send('Duels have been reset')
 
     elif '!stats' in message.content:
-        print("here are you stats")
+        if len(message.mentions) <= 0:
+            await retrieve_player_stats(message.author.id, message.channel)
+        else:
+            await retrieve_player_stats(message.mentions[0], message.channel)
 
 
 
@@ -379,14 +388,18 @@ async def create_duel_channel(message_, duel_):
 
     duel_.store_channel(duel_channel)
 
-    response = 'New challenge created with ID: ' + str(id_) + "\n Head over to {} for more details."
-    response = response.format(duel_channel.mention)
+    response = discord.Embed(title='New Duel created',
+                            description='Head over to %s for more details.' % duel_channel.mention,
+                            color=colour_code)
+    
+    response.set_author(name="Duel ID: " + str(id_))
 
-    await message_.channel.send(response)
+    await message_.channel.send(embed=response)
 
-    response = '{} has been challenged by {} \n Please type !accept or !reject in accordance to what you wish to do with this challenge.'
-    response = response.format(defender.mention, challenger.mention)
-    await duel_channel.send(response)
+    response = discord.Embed(title='%s has been challenged by %s' % (defender.name, challenger.name), 
+                            description='Please type !accept or !reject in accordance to what you wish to do with this challenge.',
+                            color=colour_code)
+    await duel_channel.send(embed=response)
 
 #   deletes all the channels under Duels-category
 async def reset_channels(guild_):
@@ -416,19 +429,22 @@ async def respond_duel(id_, responder_id, response, channel):
     #     return
 
     #   if the id of the responder matches that of the defender
-    if int(responder_id) == int(current_duel.defender):
+    if int(responder_id) == int(current_duel.defender.id):
 
         await true_response(channel, id_) if response else await false_response(channel, id_)
         
     #   if the id of the responder matches that of the challenger
-    elif int(responder_id) == int(current_duel.challenger):
-        response = '''Please allow the **Defender** to !confirm or !reject the Duel\nIf you, as the **Challenger**, no longer wish to Duel, then please indicate so by typing !cancel'''
-        await channel.send(response)
+    elif int(responder_id) == int(current_duel.challenger.id):
+        response = discord.Embed(title='Please allow the Defender to !confirm or !reject the duel',
+                                description='If you, as the **Challenger**, no longer wish to duel, then please indicate so by typing **!cancel**',
+                                color=colour_code)
+
+        await channel.send(embed=response)
     
     #   else
     else:
-        response = 'You are not a participant of the Duel'
-        await channel.send(response)
+        response = discord.Embed(title='You are not a participant of the Duel')
+        await channel.send(embed=response)
 
 async def true_response(channel, id_):
     global mycursor
@@ -440,8 +456,12 @@ async def true_response(channel, id_):
     mycursor.execute(query)
     mydb.commit()
 
-    response = 'The Duel has been accepted! \n You now have **TWO** hours to complete the Duel! \n Good luck to both and make sure to have fun!'
-    await channel.send(response)
+    response = discord.Embed(title='The duel has been accepted',
+                            description='You have **TWO** hours to complete the duel',
+                            color=0x38E935)
+    response.add_field(name='Good luck to both!', 
+                      value="Type **!help** for help with commands")
+    await channel.send(embed=response)
 
 async def false_response(channel, id_):
     global mycursor
@@ -499,6 +519,8 @@ async def cancel_duel(id_, channel, reason_index):
 
     duel_participants = retrieve_participants(id_)
 
+    firelord_role = get_firelord(guild_reference)
+    at_everyone_role = get_at_everyone(guild_reference)
     challenger = await client.fetch_user(int(duel_participants[0]))
     defender = await client.fetch_user(int(duel_participants[1]))
 
@@ -514,17 +536,26 @@ async def cancel_duel(id_, channel, reason_index):
 
     await channel.edit(overwrites=overwrites)
 
-    await channel.send('This duel has been cancelled for the following reason: \n> ' + cancellation_reasons[reason_index] + 
-                                ' \nBoth participants will be sent a private message with a confirmation \n \n**This channel will be deleted in a moment.**')
+    response = discord.Embed(title='This duel has been cancelled for the following reason:',
+                            description=cancellation_reasons[reason_index],
+                            color=0xE73D3D)
+    response.add_field(name="Both participants will be sent a private message with a confirmation",
+                      value='**This channel will be deleted in a moment.**')
+    await channel.send(embed=response)
 
+
+    response = discord.Embed(title='Your duel with **%s** was cancelled for the following reason:' % challenger.name,
+                            description=cancellation_reasons[reason_index],
+                            color=colour_code)
     response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
-    response = response.format(defender.name)
 
     private_channel = await challenger.create_dm()
     await private_channel.send(response)
 
+    response = discord.Embed(title='Your duel with **%s** was cancelled for the following reason:' % defender.name,
+                            description=cancellation_reasons[reason_index],
+                            color=colour_code)
     response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
-    response = response.format(challenger.name)
 
     private_channel = await defender.create_dm()
     await private_channel.send(response)
@@ -546,7 +577,7 @@ def retrieve_participants(id_):
     return participants[0]
 
 #   upon activating the bot, fills duel_dictionary with currently active duels
-def fill_duel_dictinary():
+async def fill_duel_dictinary():
     global mycursor
     global duel_dictionary
 
@@ -557,7 +588,21 @@ def fill_duel_dictinary():
     active_duels = mycursor.fetchall()
 
     for duel in active_duels:
-        duel_instance = Duel(duel[0], client.fetch_user(duel[1]), client.fetch_user(duel[2]), False if duel[3] == "None" else True)
+        challenger = await client.fetch_user(int(duel[1]))
+        defender = await client.fetch_user(int(duel[2]))
+
+        duel_instance = Duel(duel[0], challenger, defender, False if duel[3] == "None" else True)
         duel_dictionary[duel[0]] = duel_instance
 
+async def retrieve_player_stats(user_id, channel):
+    global mycursor
+
+    embed_message = discord.Embed(title="Title", description="description", color=colour_code)
+
+    await channel.send(embed=embed_message)
+
+    # query = "SELECT wins, losses FROM user WHERE user_id = '%s'" % (user_id)
+    # mycursor.execute(query)
+
+    # stats = mycursor.fetchall()
 client.run(TOKEN)
