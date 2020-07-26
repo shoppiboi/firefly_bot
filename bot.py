@@ -594,15 +594,57 @@ async def fill_duel_dictinary():
         duel_instance = Duel(duel[0], challenger, defender, False if duel[3] == "None" else True)
         duel_dictionary[duel[0]] = duel_instance
 
+def retrieve_wltwr(user_id):
+    global mycursor
+
+    query = f"SELECT wins, losses FROM user WHERE user_id = {user_id}"
+    mycursor.execute(query)
+
+    stats = mycursor.fetchall()
+
+    wins = stats[0][0]
+    losses = stats[0][1]
+    total = wins + losses
+    winrate = str(wins / (total) * 100)[:4]
+
+    return wins, losses, total, winrate
+
+async def retrieve_last_duel(user_id):
+    global mycursor
+
+    query = f'SELECT IF(challenger_id = {user_id}, defender_id, challenger_id), created_at FROM duel WHERE challenger_id = {user_id} OR defender_id = {user_id} ORDER BY created_at DESC'
+
+    mycursor.execute(query)
+
+    results = mycursor.fetchall()
+    
+    last_entry = results[0]
+
+    last_opponent = await client.fetch_user(last_entry[0])
+
+    last_date = str(last_entry[1])[:10]
+
+    return last_opponent, last_date
+
 async def retrieve_player_stats(user_id, channel):
     global mycursor
 
-    embed_message = discord.Embed(title="Title", description="description", color=colour_code)
+    user = await client.fetch_user(user_id)
 
+    last_duel = await retrieve_last_duel(user_id)
+    wltwr = retrieve_wltwr(user_id)
+
+    embed_message = discord.Embed(title="W/L/T/WR",
+                                description="%s / %s / %s / %s" % (wltwr[0], wltwr[1], wltwr[2], wltwr[3]),
+                                color=colour_code)
+    embed_message.add_field(name="Last Duel: ", 
+                            value=f"{last_duel[1]}, vs. {last_duel[0]}")
+    embed_message.set_author(name="%s's Stats" % user.name,
+                            icon_url=user.avatar_url)
     await channel.send(embed=embed_message)
 
-    # query = "SELECT wins, losses FROM user WHERE user_id = '%s'" % (user_id)
-    # mycursor.execute(query)
+    query = "SELECT wins, losses FROM user WHERE user_id = '%s'" % (user_id)
+    mycursor.execute(query)
 
-    # stats = mycursor.fetchall()
+    stats = mycursor.fetchall()
 client.run(TOKEN)
