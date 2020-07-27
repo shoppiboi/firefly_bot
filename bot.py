@@ -36,14 +36,6 @@ class Duel():
 
         mydb.commit()
 
-
-    #   adds fifteen minutes to the creation-time and stores it
-    #   Defender has to accept duel by this time or the duel is
-    #   automatically cancelled.
-
-    # def acceptance_time_limit(self, time):
-    #     return str(str(time)[:3] + str(int(str(time)[3:]) + 15))
-
     def get_datetime(self):
         return datetime.datetime.now()
 
@@ -53,21 +45,17 @@ class Duel():
 
     # async def accepted_duel(self):
 
-    async def duel_response(self, indicator, response_index):
-        self.cancelled = not int(indicator)
-
-        self.accepted = int(indicator)
-
-        if not self.accepted:
-            await cancel_duel(self, response_index)
+    async def duel_response(self, indicator):
+        self.accepted = indicator
 
     def set_winner(self, challenger_wins):
-        global mycursor
-        global mydb
+
+        if not self.accepted:
+            return
 
         query = f'''UPDATE duel 
                     SET 
-                    ended_at = '{self.get_datetime}', 
+                    ended_at = '{self.get_datetime()}', 
                     winner_id = '{self.challenger.id if challenger_wins else self.defender.id}' 
                     WHERE duel_id = '{self.id_}' '''
         mycursor.execute(query)
@@ -154,8 +142,14 @@ async def on_message(message):
     elif '!duel' in message.content:
 
         if len(message.mentions) == 0:
-            response = "Please @-mention the person you wish to duel"
-            await message.channel.send(response)
+            response = discord.Embed(title="Please @-mention the person you wish to duel", 
+                                    color=colour_code)
+            await message.channel.send(embed=response)
+            return
+        elif message.mentions[0].id == message.author.id:
+            response = discord.Embed(title="You can't duel yourself lad.",
+                                    color = colour_code)
+            await message.channel.send(embed=response)
             return
 
         challenger = message.author
@@ -166,7 +160,7 @@ async def on_message(message):
                                     description="New profile has been made for {}.", 
                                     color=colour_code)
             response = response.format(challenger.mention)
-            await message.channel.send(response)
+            await message.channel.send(embed=response)
 
         defender = message.mentions[0]
 
@@ -176,7 +170,7 @@ async def on_message(message):
                                     description="New profile has been made for {}.", 
                                     color=colour_code)
             response = response.format(defender.mention)
-            await message.channel.send(response)
+            await message.channel.send(embed=response)
 
         duel_id = create_duel_id(challenger.id, defender.id)
 
@@ -193,7 +187,9 @@ async def on_message(message):
             await create_duel_channel(message, new_duel)
         
         else:
-            response = "You already have outstanding duels. Please respond to them before creating a new one."
+            response = discord.Embed(title="You already have outstanding duels. Please respond to them before creating a new one.",
+                                    color = colour_code)
+            await message.channel.send(embed=response)
 
     elif message.channel.category_id == int(DUELS_CAT):
         
@@ -206,37 +202,42 @@ async def on_message(message):
         elif content == '!reject':
             await respond_duel(id_, message.author.id, False, message.channel)
 
-        # elif content == '!cancel' and current_duel.accepted == -1 and message.author.name == current_duel.challenger.name:
-        #     await respond_duel(id_, message.author.name, False, 1, message.channel)
+        #REMOVED DISPUTES FOR NOW. STILL EVALUATING WHETHER I WANT THEM TO BE IN THE SYSTEM
+        # elif '!dispute' in content:
+        #     dispute_reason = "No reason given"
 
-        elif '!dispute' in content:
-            dispute_reason = "No reason given"
+        #     split = content.split(" ", 1)
+        #     if len(split) > 1: #    if a reason has been given, the string is changed to that
+        #         dispute_reason = split[1]
 
-            split = content.split(" ", 1)
-            if len(split) > 1: #    if a reason has been given, the string is changed to that
-                dispute_reason = split[1]
-
-            await send_dispute(dispute_reason, message.channel)
+        #     await send_dispute(dispute_reason, message.channel)
+        #REMOVED DISPUTES FOR NOW. STILL EVALUATIING WHETHER I WANT THEM TO BE IN THE SYSTEM
 
         elif '!winner' in content:
             if len(message.mentions) == 0:
-                response = "Please @-mention the winner of the duel"
-                await message.channel.send(response)
+                response = discord.Embed(title="Please @-mention the winner of the duel")
+                await message.channel.send(embed=response)
                 return
 
-            await declare_winner(id_, message.mentions[0], message.channel)
+            if retrieve_duel(int(message.channel.topic)).accepted:
+                await declare_winner(id_, message.mentions[0], message.channel)
+            else:
+                response = discord.Embed(title="The duel has not started yet.",
+                                        description="Please have the Defender either !accept or !reject the duel",
+                                        color=colour_code)
+                await message.channel.send(embed=response)
 
     elif '!reset' in message.content:
-        if check_for_reset(message):
-            await message.channel.send("vibe")
-        else:
-            await message.channel.send("not vibe")
+        # if check_for_reset(message):
+        #     await message.channel.send("vibe")
+        # else:
+        #     await message.channel.send("not vibe")
+        delete_duels()
+
+        await reset_channels(message.guild)
 
         await message.delete()
-
-        # await reset_channels(message.guild)
-
-        # await message.channel.send('Duels have been reset')
+        
 
     elif '!stats' in message.content:
         if len(message.mentions) <= 0:
@@ -244,6 +245,11 @@ async def on_message(message):
         else:
             await retrieve_player_stats(message.mentions[0], message.channel)
 
+
+def delete_duels():
+    query = "DELETE FROM duel"
+    mycursor.execute(query)
+    mydb.commit()
 
 
 def check_signed_up(challenger_id):
@@ -322,7 +328,7 @@ def check_if_allowed(challenger_id):
 
     query = f'''SELECT duel_id 
                FROM duel 
-               WHERE challenger_id = '{challenger_id}' AND ended_at IS NULL' '''
+               WHERE challenger_id = '{challenger_id}' AND ended_at IS NULL '''
     mycursor.execute(query)
     results = mycursor.fetchall()
 
@@ -427,12 +433,19 @@ def create_duel_id(challenger_id, defender_id):
     duel_id = int((challenger_id + defender_id) / 2)
     duel_id = int(str(duel_id)[-4:])
 
-    return int(duel_id)
+    return int(duel_id) 
 
 #   takes the response of defender
 async def respond_duel(id_, responder_id, response, channel):
-    
+    global duel_dictionary
+
     current_duel = retrieve_duel(id_)
+
+    current_duel.duel_response(response)
+
+    current_duel.accepted = response
+
+    duel_dictionary[id_] = current_duel
 
     # if current_duel[4] != None:
     #     response = 'Duel has already been responded to.'
@@ -467,10 +480,9 @@ async def true_response(channel, id_):
     mydb.commit()
 
     response = discord.Embed(title='The duel has been accepted',
-                            description='You have **TWO** hours to complete the duel',
                             color=0x38E935)
     response.add_field(name='Good luck to both!', 
-                      value="Type **!help** for help with commands")
+                      value="Type **!help** for a list of available commands")
     await channel.send(embed=response)
 
 async def false_response(channel, id_):
@@ -489,7 +501,8 @@ async def false_response(channel, id_):
     await delete_channel(channel)
 
 async def send_dispute(reason, channel):
-    global firelord_role
+
+    firelord_role = get_firelord(channel.guild)
 
     mod_channel = await client.fetch_channel(int(MOD_CHANNEL_ID))
        
@@ -513,8 +526,16 @@ async def declare_winner(id_, winner, channel):
 
     await channel.edit(topic=str(id_) + " WINNER: " + winner.name)
 
-    response = ('The winner of Duel ' + str(id_) + ' is: **' + winner.name + '** !\n 🥳🎉 **Congratulations!** 🥳🎉\n This channel will be deleted in **5 minutes**. If you wish to dispute the duel, please indicate so by typing **!dispute**')
-    await channel.send(response)
+    response = discord.Embed(title= "🥳🎉**Congratulations**🥳🎉",
+                            description= "**This channel will be deleted in a moment.**\nSay your gg's and whatnot",
+                            color= colour_code)
+    response.set_author(name=f"Winner of the duel: {winner.name}")
+
+    # response = ('The winner of Duel ' + str(id_) + ' is: **' + winner.name + '** !\n 🥳🎉 **Congratulations!** 🥳🎉\n This channel will be deleted in **5 minutes**. If you wish to dispute the duel, please indicate so by typing **!dispute**')
+    await channel.send(embed=response)
+
+    await asyncio.sleep(30)
+    await delete_channel(channel)
 
 def create_duel_clock(duel, time):
     new_timer = Duel_Clock(duel, time, 2)
@@ -554,18 +575,17 @@ async def cancel_duel(id_, channel, reason_index):
     await channel.send(embed=response)
 
 
-    response = discord.Embed(title='Your duel with **%s** was cancelled for the following reason:' % challenger.name,
+    response = discord.Embed(title=f'Your duel with **{challenger.name}** was cancelled for the following reason:',
                             description=cancellation_reasons[reason_index],
                             color=colour_code)
-    response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
 
     private_channel = await challenger.create_dm()
     await private_channel.send(response)
 
-    response = discord.Embed(title='Your duel with **%s** was cancelled for the following reason:' % defender.name,
+
+    response = discord.Embed(title=f'Your duel with **{defender.name}** was cancelled for the following reason:',
                             description=cancellation_reasons[reason_index],
                             color=colour_code)
-    response = 'Your duel with **{}** was cancelled for the following reason: \n> ' + cancellation_reasons[reason_index]
 
     private_channel = await defender.create_dm()
     await private_channel.send(response)
@@ -576,7 +596,6 @@ def retrieve_duel(id_):
     return duel_dictionary[id_]
 
 def retrieve_participants(id_):
-    global mycursor
     
     query = f'''SELECT challenger_id, defender_id 
                FROM duel 
@@ -590,7 +609,6 @@ def retrieve_participants(id_):
 
 #   upon activating the bot, fills duel_dictionary with currently active duels
 async def fill_duel_dictinary():
-    global mycursor
     global duel_dictionary
 
     query = '''SELECT duel_id, challenger_id, defender_id, accepted 
@@ -610,11 +628,10 @@ async def fill_duel_dictinary():
 
 #   retrieve win/loss/total/winrate stats 
 def retrieve_wltwr(user_id):
-    global mycursor
 
     query = f'''SELECT wins, losses 
                 FROM user 
-                WHERE user_id = {user_id}' '''
+                WHERE user_id = '{user_id}' '''
     mycursor.execute(query)
 
     stats = mycursor.fetchall()
@@ -627,7 +644,6 @@ def retrieve_wltwr(user_id):
     return wins, losses, total, winrate
 
 async def retrieve_last_duel(user_id):
-    global mycursor
 
     query = f'''SELECT IF(challenger_id = {user_id}, defender_id, challenger_id), created_at 
                 FROM duel 
@@ -647,7 +663,6 @@ async def retrieve_last_duel(user_id):
     return last_opponent, last_date
 
 async def retrieve_player_stats(user_id, channel):
-    global mycursor
 
     user = await client.fetch_user(user_id)
 
